@@ -330,7 +330,7 @@ def word_frequencies_by_year(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def year_over_year_changes(
-    wf_year: pd.DataFrame, top_n: int = 10, min_count_per_year: int = 20
+    wf_year: pd.DataFrame, top_n: int = 10, min_count_per_year: int = 15
 ) -> dict:
     """For each consecutive year pair (Y-1 → Y), compute a chi-square p-value for
     every word and return the top_n most-changed words per year.
