@@ -165,7 +165,7 @@ def enrich_word_frequencies(wf: pd.DataFrame, top_n: int = 1000) -> pd.DataFrame
 def plot_sender_wordclouds(
     ewf: pd.DataFrame,
     output_path: str = "wordclouds.png",
-    max_words: int = 100,
+    max_words: int = 150,
     font_path: str = "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
 ) -> None:
     def fix_rtl(word: str) -> str:
@@ -455,7 +455,7 @@ def plot_summary_report(
     df: pd.DataFrame,
     ewf: pd.DataFrame,
     output_path: str = "summary_report.png",
-    max_wc_words: int = 100,
+    max_wc_words: int = 150,
     font_path: str = "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
 ) -> None:
     def fix_rtl(word: str) -> str:
