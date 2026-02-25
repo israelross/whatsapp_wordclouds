@@ -21,9 +21,19 @@ pip install -r requirements.txt
 
 ## Exporting your WhatsApp chat
 
-1. Open the chat in WhatsApp on your phone.
-2. Tap ⋮ (Android) or the contact name (iOS) → **More** → **Export chat**.
-3. Choose **Without media** and save the resulting `_chat.txt` file somewhere accessible.
+**On Android**
+1. Open the conversation in WhatsApp.
+2. Tap ⋮ (top-right) → **More** → **Export chat**.
+3. Choose **Without media**.
+4. Share or save the resulting `.zip` file to your computer.
+5. Unzip it — the archive contains a file named `_chat.txt`. That is the file you pass to this tool.
+
+**On iPhone**
+1. Open the conversation in WhatsApp.
+2. Tap the contact / group name at the top → scroll down → **Export Chat**.
+3. Choose **Without Media**.
+4. Share or save the resulting `.zip` file to your computer.
+5. Unzip it — the archive contains a file named `_chat.txt`. That is the file you pass to this tool.
 
 ## Usage
 
