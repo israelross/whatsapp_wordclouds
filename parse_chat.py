@@ -76,13 +76,20 @@ def parse_chat(filepath: str) -> pd.DataFrame:
     return df.reset_index(drop=True)
 
 
-def word_frequencies(df: pd.DataFrame) -> pd.DataFrame:
-    # Match sequences of Unicode letters + apostrophe only — digits and underscores excluded
-    token_re = re.compile(r"[^\W\d_]+(?:'[^\W\d_]+)*", re.UNICODE)
+_TOKEN_RE = re.compile(r"[^\W\d_]+(?:'[^\W\d_]+)*", re.UNICODE)
+_HEB_PUNCT = str.maketrans("", "", "\u05F3\u05F4")  # ׳ ״ → drop
 
+
+def _tokenize(text: str) -> list[str]:
+    """Lowercase, strip Hebrew geresh/gershayim, then extract words of ≥ 2 letters."""
+    cleaned = text.lower().translate(_HEB_PUNCT)
+    return [w for w in _TOKEN_RE.findall(cleaned) if len(w) >= 2]
+
+
+def word_frequencies(df: pd.DataFrame) -> pd.DataFrame:
     rows = []
     for _, row in df.iterrows():
-        for word in token_re.findall(row["content"].lower()):
+        for word in _tokenize(row["content"]):
             rows.append({"word": word, "sender": row["sender"]})
 
     if not rows:
@@ -273,18 +280,18 @@ def _draw_pie(ax: plt.Axes, df: pd.DataFrame, sender_colors: dict) -> None:
         startangle=90,
         wedgeprops={"edgecolor": "white", "linewidth": 2.5},
         pctdistance=0.75,
+        labeldistance=1.25,
     )
     for t in autotexts:
         t.set_fontsize(11)
         t.set_fontweight("bold")
-        t.set_color("white")
+        t.set_color("black")
     ax.set_title("Message Share by Sender", fontsize=13, pad=12)
 
 
 def _draw_avg_words(ax: plt.Axes, df: pd.DataFrame, sender_colors: dict) -> None:
-    token_re = re.compile(r"[^\W\d_]+(?:'[^\W\d_]+)*", re.UNICODE)
     tmp = df.copy()
-    tmp["n"] = tmp["content"].apply(lambda t: len(token_re.findall(t.lower())))
+    tmp["n"] = tmp["content"].apply(lambda t: len(_tokenize(t)))
     avg = tmp.groupby("sender")["n"].mean().sort_values()
     bars = ax.barh(avg.index, avg.values,
                    color=[sender_colors[s] for s in avg.index],
@@ -296,6 +303,123 @@ def _draw_avg_words(ax: plt.Axes, df: pd.DataFrame, sender_colors: dict) -> None
     ax.set_title("Average Message Length", fontsize=13, pad=12)
     ax.spines[["top", "right"]].set_visible(False)
     ax.set_xlim(0, avg.max() * 1.2)
+
+
+def word_frequencies_by_year(df: pd.DataFrame) -> pd.DataFrame:
+    """Word × year count matrix (all senders aggregated)."""
+    tmp = df.copy()
+    tmp["year"] = pd.to_datetime(tmp["date"]).dt.year
+    tmp["tokens"] = tmp["content"].apply(_tokenize)
+    tmp = tmp.explode("tokens").dropna(subset=["tokens"])
+    tmp = tmp.rename(columns={"tokens": "word"})
+    counts = (
+        tmp.groupby(["word", "year"])
+        .size()
+        .unstack(level="year", fill_value=0)
+    )
+    counts.columns.name = None
+    counts.index.name = "word"
+    return counts
+
+
+def year_over_year_changes(
+    wf_year: pd.DataFrame, top_n: int = 10, min_count_per_year: int = 20
+) -> dict:
+    """For each consecutive year pair (Y-1 → Y), compute a chi-square p-value for
+    every word and return the top_n most-changed words per year.
+
+    Only words with at least *min_count_per_year* appearances in **both** the
+    previous year and the current year are considered.
+    Returns dict: year → list of (word, direction) where direction is '+' (more used
+    in Y than Y-1) or '-' (less used).
+    """
+    years = sorted(wf_year.columns)
+    total_per_year = wf_year.sum()
+
+    result = {}
+    for i in range(1, len(years)):
+        y_curr, y_prev = years[i], years[i - 1]
+
+        # Only include words that appear enough in both years being compared
+        mask = (wf_year[y_curr] >= min_count_per_year) & (wf_year[y_prev] >= min_count_per_year)
+        wf = wf_year[mask]
+
+        a = wf[y_curr].values.astype(float)   # word count current year
+        c = wf[y_prev].values.astype(float)   # word count previous year
+        b = float(total_per_year[y_curr]) - a
+        d = float(total_per_year[y_prev]) - c
+
+        n = a + b + c + d
+        denom = (a + b) * (c + d) * (a + c) * (b + d)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            chi2_stat = np.where(denom > 0, n * (a * d - b * c) ** 2 / denom, 0.0)
+        p_vals = chi2_dist.sf(chi2_stat, df=1)
+
+        freq_curr = a / max(float(total_per_year[y_curr]), 1)
+        freq_prev = c / max(float(total_per_year[y_prev]), 1)
+        directions = np.where(freq_curr >= freq_prev, "+", "-")
+
+        year_df = pd.DataFrame(
+            {"word": wf.index, "p_val": p_vals, "direction": directions}
+        )
+        result[y_curr] = list(
+            zip(year_df.nsmallest(top_n, "p_val")["word"],
+                year_df.nsmallest(top_n, "p_val")["direction"])
+        )
+
+    return result
+
+
+def _draw_year_word_table(ax: plt.Axes, changes: dict, font_path: str) -> None:
+    from matplotlib.font_manager import FontProperties
+
+    def fix_rtl(w: str) -> str:
+        return w[::-1] if any("\u0590" <= c <= "\u05FF" for c in w) else w
+
+    ax.axis("off")
+    ax.set_title("Most Changed Words Year-over-Year", fontsize=13, pad=12)
+
+    years = sorted(changes.keys())
+    if not years:
+        ax.text(0.5, 0.5, "Not enough years of data.",
+                ha="center", va="center", transform=ax.transAxes)
+        return
+
+    n_cols = len(years)
+    n_rows = max(len(v) for v in changes.values())
+    col_w = 1.0 / n_cols
+    top = 0.92
+    row_h = top / (n_rows + 1.5)
+
+    fp_header = FontProperties(fname=font_path, size=11, weight="bold")
+    fp_cell = FontProperties(fname=font_path, size=10)
+
+    # Column headers
+    for j, year in enumerate(years):
+        ax.text((j + 0.5) * col_w, top, str(year),
+                ha="center", va="top", fontproperties=fp_header,
+                transform=ax.transAxes)
+
+    # Separator under header
+    y_sep = top - row_h * 0.8
+    ax.plot([0.01, 0.99], [y_sep, y_sep], color="#aaaaaa", linewidth=1.2,
+            transform=ax.transAxes, clip_on=False)
+
+    # Vertical column separators
+    for j in range(1, n_cols):
+        ax.plot([j * col_w, j * col_w], [0.02, 0.95], color="#eeeeee",
+                linewidth=1, transform=ax.transAxes, clip_on=False)
+
+    # Word cells
+    for j, year in enumerate(years):
+        for i, (word, direction) in enumerate(changes[year]):
+            color = "#27ae60" if direction == "+" else "#c0392b"
+            arrow = "↑" if direction == "+" else "↓"
+            y_pos = top - (i + 2) * row_h
+            ax.text((j + 0.5) * col_w, y_pos,
+                    f"{arrow} {fix_rtl(word)}",
+                    ha="center", va="center", color=color,
+                    fontproperties=fp_cell, transform=ax.transAxes)
 
 
 def plot_messages_per_week(
@@ -331,9 +455,9 @@ def plot_summary_report(
     n_wc = len(wc_senders)
     wc_rows = math.ceil(n_wc / 2)
 
-    height_ratios = [3, 3, 2] + [5] * wc_rows
+    height_ratios = [3, 3, 2, 4] + [5] * wc_rows
     fig = plt.figure(figsize=(22, sum(height_ratios) * 1.3))
-    gs = fig.add_gridspec(3 + wc_rows, 2, height_ratios=height_ratios,
+    gs = fig.add_gridspec(4 + wc_rows, 2, height_ratios=height_ratios,
                           hspace=0.55, wspace=0.3)
 
     # 1 — Messages per week (stacked)
@@ -348,9 +472,14 @@ def plot_summary_report(
     # 4 — Avg words per message
     _draw_avg_words(fig.add_subplot(gs[2, 1]), df, sender_colors)
 
-    # 5 — Word clouds
+    # 5 — Year-over-year word change table
+    wf_year = word_frequencies_by_year(df)
+    changes = year_over_year_changes(wf_year)
+    _draw_year_word_table(fig.add_subplot(gs[3, :]), changes, font_path)
+
+    # 6 — Word clouds
     for i, sender in enumerate(wc_senders):
-        ax_wc = fig.add_subplot(gs[3 + i // 2, i % 2])
+        ax_wc = fig.add_subplot(gs[4 + i // 2, i % 2])
         subset = ewf[ewf[f"above_avg_{sender}"]].nsmallest(max_wc_words, f"chi2_pval_{sender}")
         p_clipped = subset[f"chi2_pval_{sender}"].clip(lower=1e-300)
         weights = {fix_rtl(w): s for w, s in (-np.log10(p_clipped)).items()}
@@ -366,7 +495,7 @@ def plot_summary_report(
             spine.set_color("#888888")
 
     for i in range(n_wc, wc_rows * 2):
-        fig.add_subplot(gs[3 + i // 2, i % 2]).set_visible(False)
+        fig.add_subplot(gs[4 + i // 2, i % 2]).set_visible(False)
 
     plt.savefig(output_path, dpi=150, bbox_inches="tight", pad_inches=0.2)
     plt.close()
@@ -384,11 +513,22 @@ if __name__ == "__main__":
                              "Defaults to the same folder as the chat file.")
     parser.add_argument("--all", dest="save_all", action="store_true",
                         help="Also save each plot as a separate image file.")
+    parser.add_argument("--start-date", type=str, default=None,
+                        metavar="YYYY-MM-DD",
+                        help="Ignore all messages before this date (inclusive from this date).")
     args = parser.parse_args()
 
     if not args.chat_file.is_file():
         logging.error(f"File not found: {args.chat_file}")
         sys.exit(1)
+
+    start_date = None
+    if args.start_date:
+        try:
+            start_date = datetime.strptime(args.start_date, "%Y-%m-%d").date()
+        except ValueError:
+            logging.error(f"Invalid --start-date '{args.start_date}'. Expected format: YYYY-MM-DD.")
+            sys.exit(1)
 
     out_dir = args.output_dir if args.output_dir else args.chat_file.parent
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -398,6 +538,13 @@ if __name__ == "__main__":
 
     logging.info(f"Parsing {args.chat_file} ...")
     df = parse_chat(str(args.chat_file))
+
+    if start_date:
+        before = len(df)
+        df = df[df["date"] >= start_date].reset_index(drop=True)
+        logging.info(f"  Filtered to messages from {start_date} onwards "
+                     f"({before - len(df):,} messages removed).")
+
     logging.info(f"  {len(df):,} messages from {df['sender'].nunique()} senders.")
 
     logging.info("Computing word frequencies ...")

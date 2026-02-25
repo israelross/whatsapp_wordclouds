@@ -47,6 +47,7 @@ python parse_chat.py <chat_file> [--output-dir <dir>] [--all]
 |---|---|---|
 | `chat_file` | Yes | Path to the exported `_chat.txt` file |
 | `--output-dir` | No | Folder to save output images. Defaults to the same folder as the chat file |
+| `--start-date` | No | Only include messages from this date onwards. Format: `YYYY-MM-DD` |
 | `--all` | No | Also save each plot as a separate image in addition to the summary report |
 
 ### Output files
@@ -73,10 +74,11 @@ python parse_chat.py /path/to/_chat.txt --output-dir ./reports
 
 ## Summary report contents
 
-The single-page `summary_report.png` contains five panels:
+The single-page `summary_report.png` contains six panels:
 
 1. **Messages per week** — stacked bar chart showing each sender's weekly message count.
 2. **Activity heatmap** — message density by day of week and hour of day (starts at 05:00).
 3. **Message share** — pie chart of total messages per sender.
 4. **Average message length** — horizontal bar chart of mean words per message per sender.
-5. **Word clouds** — one cloud per sender showing their most distinctively used words (sized by statistical significance via chi-square p-value).
+5. **Most changed words year-over-year** — for each consecutive year pair, the words whose usage rate changed the most compared to the previous year. Words shown in green (↑) became significantly more frequent; words in red (↓) became significantly less frequent. Only words that appear at least 20 times in both years are considered.
+6. **Word clouds** — one cloud per sender showing their most distinctively used words (sized by statistical significance via chi-square p-value).
