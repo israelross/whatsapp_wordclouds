@@ -32,10 +32,14 @@ _META_RE = re.compile(
     r"|\u200e?<This message was edited>",
     re.IGNORECASE,
 )
+# URLs — stripped from content before any analysis
+_URL_RE = re.compile(r"https?://\S+|www\.\S+", re.IGNORECASE)
+
 # Whole messages that carry no user content
 _DROP_CONTENT = re.compile(
     r"^\u200e?You deleted this message\.?\s*$"
-    r"|^\u200e?Missed (?:voice|video) call[\u200e\w ,]*$",
+    r"|^\u200e?Missed (?:voice|video) call[\u200e\w ,]*$"
+    r"|.*\bcall,",
     re.IGNORECASE,
 )
 
@@ -70,6 +74,7 @@ def parse_chat(filepath: str) -> pd.DataFrame:
     # Strip inline meta annotations, then drop rows that are now empty or
     # that contained only a "You deleted this message" notice
     df["content"] = df["content"].apply(lambda t: _META_RE.sub("", t).strip())
+    df["content"] = df["content"].apply(lambda t: _URL_RE.sub("", t).strip())
     df = df[df["content"] != ""]
     df = df[~df["content"].str.match(_DROP_CONTENT)]
 
@@ -312,6 +317,8 @@ def word_frequencies_by_year(df: pd.DataFrame) -> pd.DataFrame:
     tmp["tokens"] = tmp["content"].apply(_tokenize)
     tmp = tmp.explode("tokens").dropna(subset=["tokens"])
     tmp = tmp.rename(columns={"tokens": "word"})
+    # Count each word at most once per day
+    tmp = tmp.drop_duplicates(subset=["word", "date"])
     counts = (
         tmp.groupby(["word", "year"])
         .size()
@@ -340,8 +347,11 @@ def year_over_year_changes(
     for i in range(1, len(years)):
         y_curr, y_prev = years[i], years[i - 1]
 
-        # Only include words that appear enough in both years being compared
-        mask = (wf_year[y_curr] >= min_count_per_year) & (wf_year[y_prev] >= min_count_per_year)
+        # Only include words that appear enough in both years being compared:
+        # at least 20 times combined
+        mask = (
+            (wf_year[y_curr] + wf_year[y_prev] >= min_count_per_year)
+        )
         wf = wf_year[mask]
 
         a = wf[y_curr].values.astype(float)   # word count current year
