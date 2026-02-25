@@ -335,8 +335,9 @@ def year_over_year_changes(
     """For each consecutive year pair (Y-1 → Y), compute a chi-square p-value for
     every word and return the top_n most-changed words per year.
 
-    Only words with at least *min_count_per_year* appearances in **both** the
-    previous year and the current year are considered.
+    Words that appear in only one of the two years get 0 for the other year.
+    Only words with at least *min_count_per_year* appearances in either year
+    are considered.
     Returns dict: year → list of (word, direction) where direction is '+' (more used
     in Y than Y-1) or '-' (less used).
     """
@@ -347,15 +348,17 @@ def year_over_year_changes(
     for i in range(1, len(years)):
         y_curr, y_prev = years[i], years[i - 1]
 
-        # Only include words that appear enough in both years being compared:
-        # at least 20 times combined
-        mask = (
-            (wf_year[y_curr] + wf_year[y_prev] >= min_count_per_year)
+        # Outer-merge the two year columns so words present in only one year
+        # get 0 for the other, then keep words meeting the minimum in either year
+        pair = (
+            pd.concat([wf_year[y_curr].rename("curr"), wf_year[y_prev].rename("prev")], axis=1)
+            .fillna(0)
+            .astype(float)
         )
-        wf = wf_year[mask]
+        pair = pair[pair["curr"] + pair["prev"] >= min_count_per_year]
 
-        a = wf[y_curr].values.astype(float)   # word count current year
-        c = wf[y_prev].values.astype(float)   # word count previous year
+        a = pair["curr"].values   # word count current year
+        c = pair["prev"].values   # word count previous year
         b = float(total_per_year[y_curr]) - a
         d = float(total_per_year[y_prev]) - c
 
@@ -370,7 +373,7 @@ def year_over_year_changes(
         directions = np.where(freq_curr >= freq_prev, "+", "-")
 
         year_df = pd.DataFrame(
-            {"word": wf.index, "p_val": p_vals, "direction": directions}
+            {"word": pair.index, "p_val": p_vals, "direction": directions}
         )
         result[y_curr] = list(
             zip(year_df.nsmallest(top_n, "p_val")["word"],
