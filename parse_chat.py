@@ -22,6 +22,11 @@ MSG_PATTERN = re.compile(
     r"^\[(\d{2}/\d{2}/\d{4}), (\d{1,2}:\d{2}:\d{2})\] ([^:]+): (.*)"
 )
 
+# Matches lines like: 11.1.2018, 19:06 - Sender Name: message  (Android/older export format)
+MSG_PATTERN_2 = re.compile(
+    r"^(\d{1,2}\.\d{1,2}\.\d{4}), (\d{1,2}:\d{2}) - ([^:]+): (.*)"
+)
+
 # Inline meta annotations WhatsApp appends to message content.
 # Order matters: the document pattern (with filename preamble) must come first
 # so it matches the full "file.pdf • ‎N pages ‎document omitted" string before
@@ -29,7 +34,8 @@ MSG_PATTERN = re.compile(
 _META_RE = re.compile(
     r".+\.\w+\s*•\s*\u200e\d+\s+pages?\s*\u200e?document omitted"   # document with filename
     r"|\u200e?(?:image|audio|video|GIF|sticker|document|Contact\s+card) omitted"
-    r"|\u200e?<This message was edited>",
+    r"|\u200e?<This message was edited>"
+    r"|<המדיה לא נכללה>",                                             # Hebrew: media not included
     re.IGNORECASE,
 )
 # URLs — stripped from content before any analysis
@@ -53,13 +59,19 @@ def parse_chat(filepath: str) -> pd.DataFrame:
             line = line.rstrip("\n").lstrip("\u200e\u200f\u202a\u202c")
             match = MSG_PATTERN.match(line)
             if match:
+                date_fmt, time_fmt = "%d/%m/%Y", "%H:%M:%S"
+            else:
+                match = MSG_PATTERN_2.match(line)
+                if match:
+                    date_fmt, time_fmt = "%d.%m.%Y", "%H:%M"
+            if match:
                 if current:
                     records.append(current)
                 date_str, time_str, sender, content = match.groups()
                 current = {
                     "sender": sender,
-                    "date": datetime.strptime(date_str, "%d/%m/%Y").date(),
-                    "time_of_day": datetime.strptime(time_str, "%H:%M:%S").time(),
+                    "date": datetime.strptime(date_str, date_fmt).date(),
+                    "time_of_day": datetime.strptime(time_str, time_fmt).time(),
                     "content": content,
                 }
             elif current:
